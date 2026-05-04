@@ -1,88 +1,83 @@
-// Google Chat タスク管理Bot - メインハンドラ
+// Google Chat タスク管理Bot - メインハンドラ（Apps Script直接接続方式）
 
-function doPost(e) {
+function onMessage(event) {
   try {
-    const event = JSON.parse(e.postData.contents);
-    var response;
+    var message = event.message;
 
-    switch (event.type) {
-      case 'MESSAGE':
-        response = handleMessage(event);
-        break;
-      case 'CARD_CLICKED':
-        response = handleCardClick(event);
-        break;
-      case 'MESSAGE_ACTION':
-        response = handleMessageAction(event);
-        break;
-      case 'ADDED_TO_SPACE':
-        response = {
-          text: '👋 MyuTask Botが追加されました！\n' +
-                '📋 メッセージを右クリックして「全体タスク化」「個人タスク化」でタスク登録できます。\n' +
-                '`/tasks` で全体タスク一覧、`/mytasks` で自分のタスク一覧を表示します。'
-        };
-        break;
-      default:
-        response = { text: '' };
+    if (message && message.slashCommand) {
+      var commandId = message.slashCommand.commandId;
+      if (commandId == 1) return buildGroupTaskListResponse(event);
+      if (commandId == 2) return buildPersonalTaskListResponse(event);
+      if (commandId == 3) return addTaskFromAction(event, 'group');
+      if (commandId == 4) return addTaskFromAction(event, 'personal');
     }
 
-    return ContentService
-      .createTextOutput(JSON.stringify(response))
-      .setMimeType(ContentService.MimeType.JSON);
-
+    return {
+      text: '使い方：`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。'
+    };
   } catch (err) {
-    Logger.log('doPost error: ' + err.toString());
-    return ContentService
-      .createTextOutput(JSON.stringify({ text: 'エラーが発生しました: ' + err.message }))
-      .setMimeType(ContentService.MimeType.JSON);
+    Logger.log('onMessage error: ' + err.toString());
+    return { text: 'エラー: ' + err.message };
   }
 }
 
-function handleMessage(event) {
-  var message = event.message;
-
-  // 接続テスト：どんなメッセージでも応答を返す
-  return { text: 'テスト：Botは動作しています！ eventType=' + event.type };
-}
-
-function handleMessageAction(event) {
-  var actionName = event.action.actionMethodName;
-
-  if (actionName === '全体タスク化' || actionName === 'addGroupTask') {
-    return addTaskFromAction(event, 'group');
-  }
-  if (actionName === '個人タスク化' || actionName === 'addPersonalTask') {
-    return addTaskFromAction(event, 'personal');
-  }
-
-  return { text: '不明なアクションです。' };
-}
-
-function handleCardClick(event) {
-  var actionName = '';
-  if (event.action) {
-    actionName = event.action.function || event.action.actionMethodName || '';
-  }
-  var params = (event.action && event.action.parameters) ? event.action.parameters : [];
-
-  function getParam(key) {
-    for (var i = 0; i < params.length; i++) {
-      if (params[i].key === key) return params[i].value;
+function onCardAction(event) {
+  try {
+    var actionName = '';
+    if (event.action) {
+      actionName = event.action.function || event.action.actionMethodName || '';
     }
-    return null;
-  }
+    var params = (event.action && event.action.parameters) ? event.action.parameters : [];
 
-  if (actionName === 'completeTask') {
-    var taskId = getParam('taskId');
-    var taskType = getParam('taskType');
-    return completeTaskAction(event, taskId, taskType);
-  }
-  if (actionName === 'refreshGroupTasks') {
-    return buildGroupTaskListResponse(event);
-  }
-  if (actionName === 'refreshPersonalTasks') {
-    return buildPersonalTaskListResponse(event);
-  }
+    function getParam(key) {
+      for (var i = 0; i < params.length; i++) {
+        if (params[i].key === key) return params[i].value;
+      }
+      return null;
+    }
 
-  return { text: '不明なアクションです。' };
+    if (actionName === 'completeTask') {
+      return completeTaskAction(event, getParam('taskId'), getParam('taskType'));
+    }
+    if (actionName === 'refreshGroupTasks') {
+      return buildGroupTaskListResponse(event);
+    }
+    if (actionName === 'refreshPersonalTasks') {
+      return buildPersonalTaskListResponse(event);
+    }
+
+    return { text: '不明なアクションです。' };
+  } catch (err) {
+    Logger.log('onCardAction error: ' + err.toString());
+    return { text: 'エラー: ' + err.message };
+  }
+}
+
+function onMessageAction(event) {
+  try {
+    var actionName = '';
+    if (event.action) {
+      actionName = event.action.actionMethodName || event.action.function || '';
+    }
+
+    if (actionName === '全体タスク化' || actionName === 'addGroupTask') {
+      return addTaskFromAction(event, 'group');
+    }
+    if (actionName === '個人タスク化' || actionName === 'addPersonalTask') {
+      return addTaskFromAction(event, 'personal');
+    }
+
+    return { text: '不明なアクションです。' };
+  } catch (err) {
+    Logger.log('onMessageAction error: ' + err.toString());
+    return { text: 'エラー: ' + err.message };
+  }
+}
+
+function onSpaceCreated(event) {
+  return {
+    text: 'MyuTask Botが追加されました！\n' +
+          '`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。\n' +
+          'メッセージを右クリックして「全体タスク化」「個人タスク化」でタスク登録できます。'
+  };
 }
