@@ -1,6 +1,7 @@
 // Google Chat タスク管理Bot - メインハンドラ（Apps Script直接接続方式）
 
-function onMessage(event) {
+// スラッシュコマンド・クイックコマンド処理
+function onAppCommand(event) {
   try {
     var message = event.message;
 
@@ -12,6 +13,16 @@ function onMessage(event) {
       if (commandId == 4) return addTaskFromAction(event, 'personal');
     }
 
+    return { text: '不明なコマンドです。' };
+  } catch (err) {
+    Logger.log('onAppCommand error: ' + err.toString());
+    return { text: 'エラー: ' + err.message };
+  }
+}
+
+// 通常メッセージ処理
+function onMessage(event) {
+  try {
     return {
       text: '使い方：`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。'
     };
@@ -21,6 +32,7 @@ function onMessage(event) {
   }
 }
 
+// カードボタンのクリック処理
 function onCardAction(event) {
   try {
     var actionName = '';
@@ -53,31 +65,15 @@ function onCardAction(event) {
   }
 }
 
-function onMessageAction(event) {
-  try {
-    var actionName = '';
-    if (event.action) {
-      actionName = event.action.actionMethodName || event.action.function || '';
-    }
-
-    if (actionName === '全体タスク化' || actionName === 'addGroupTask') {
-      return addTaskFromAction(event, 'group');
-    }
-    if (actionName === '個人タスク化' || actionName === 'addPersonalTask') {
-      return addTaskFromAction(event, 'personal');
-    }
-
-    return { text: '不明なアクションです。' };
-  } catch (err) {
-    Logger.log('onMessageAction error: ' + err.toString());
-    return { text: 'エラー: ' + err.message };
-  }
-}
-
-function onSpaceCreated(event) {
+// スペースに追加されたとき
+function onAddedToSpace(event) {
   return {
     text: 'MyuTask Botが追加されました！\n' +
-          '`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。\n' +
-          'メッセージを右クリックして「全体タスク化」「個人タスク化」でタスク登録できます。'
+          '`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。'
   };
+}
+
+// スペースから削除されたとき
+function onRemovedFromSpace(event) {
+  Logger.log('Bot removed from space: ' + JSON.stringify(event.space));
 }
