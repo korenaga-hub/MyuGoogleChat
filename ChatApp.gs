@@ -1,5 +1,15 @@
 // Google Chat タスク管理Bot - Apps Script接続タイプ用
 
+function onAppCommand(event) {
+  try {
+    Logger.log('onAppCommand: ' + JSON.stringify(event).substring(0, 500));
+    return handleMessage(event);
+  } catch(err) {
+    Logger.log('ERROR: ' + err.toString());
+    return { text: 'エラー: ' + err.message };
+  }
+}
+
 function onMessage(event) {
   try {
     Logger.log('onMessage: ' + JSON.stringify(event).substring(0, 500));
