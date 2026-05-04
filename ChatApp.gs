@@ -41,18 +41,8 @@ function doPost(e) {
 function handleMessage(event) {
   var message = event.message;
 
-  if (message.slashCommand) {
-    var commandId = message.slashCommand.commandId;
-    if (commandId == 1) return buildGroupTaskListResponse(event);
-    if (commandId == 2) return buildPersonalTaskListResponse(event);
-    if (commandId == 3) return addTaskFromAction(event, 'group');
-    if (commandId == 4) return addTaskFromAction(event, 'personal');
-  }
-
-  return {
-    text: '`/tasks` で全体タスク一覧、`/mytasks` で自分のタスク一覧を表示できます。\n' +
-          '「全体タスク化」または「個人タスク化」コマンドでタスクを登録できます。'
-  };
+  // 接続テスト：どんなメッセージでも応答を返す
+  return { text: 'テスト：Botは動作しています！ eventType=' + event.type };
 }
 
 function handleMessageAction(event) {
