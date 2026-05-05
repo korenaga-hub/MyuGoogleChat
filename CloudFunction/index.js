@@ -1,16 +1,49 @@
-const { google } = require('googleapis');
-const { v4: uuidv4 } = require('uuid');
-
 const SPREADSHEET_ID = '1FDPAUA7imWvaGdkaOHKp2HV1ZIeqPCjXnJ0DuSgN87o';
 const GROUP_SHEET = '全体タスク';
 const PERSONAL_SHEET = '個人タスク';
 
-async function getSheets() {
-  const auth = new google.auth.GoogleAuth({
-    scopes: ['https://www.googleapis.com/auth/spreadsheets']
-  });
-  const client = await auth.getClient();
-  return google.sheets({ version: 'v4', auth: client });
+async function getAccessToken() {
+  const res = await fetch(
+    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+    { headers: { 'Metadata-Flavor': 'Google' } }
+  );
+  const data = await res.json();
+  return data.access_token;
+}
+
+async function sheetsGet(range) {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  return await res.json();
+}
+
+async function sheetsAppend(range, values) {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values })
+    }
+  );
+  return await res.json();
+}
+
+async function sheetsUpdate(range, values) {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ values })
+    }
+  );
+  return await res.json();
 }
 
 exports.chatApp = async (req, res) => {
@@ -61,22 +94,23 @@ async function addTaskFromAction(event, taskType) {
   const message = event.message;
   const user = event.user;
   const space = event.space;
-  const text = message.text || '(テキストなし)';
+  const text = (message && message.text) ? message.text : '(テキストなし)';
   const truncated = text.length > 50 ? text.substring(0, 50) + '...' : text;
-  const taskId = uuidv4();
+  const taskId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const sheets = await getSheets();
 
   if (taskType === 'group') {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID, range: GROUP_SHEET + '!A:K', valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[taskId, space.name, space.displayName || space.name, message.name, truncated, user.name, user.displayName || user.name, '未完了', now, '', '']] }
-    });
+    await sheetsAppend(GROUP_SHEET + '!A:K', [[
+      taskId, space.name, space.displayName || space.name,
+      (message && message.name) ? message.name : '',
+      truncated, user.name, user.displayName || user.name, '未完了', now, '', ''
+    ]]);
   } else {
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID, range: PERSONAL_SHEET + '!A:I', valueInputOption: 'USER_ENTERED',
-      requestBody: { values: [[taskId, user.name, user.displayName || user.name, space.name, message.name, truncated, '未完了', now, '']] }
-    });
+    await sheetsAppend(PERSONAL_SHEET + '!A:I', [[
+      taskId, user.name, user.displayName || user.name,
+      space.name, (message && message.name) ? message.name : '',
+      truncated, '未完了', now, ''
+    ]]);
   }
 
   const icon = taskType === 'group' ? '👥' : '👤';
@@ -96,17 +130,16 @@ async function completeTaskAction(event, taskId, taskType) {
   const user = event.user;
   const userName = user.displayName || user.name;
   const now = new Date().toISOString();
-  const sheets = await getSheets();
   const sheetName = taskType === 'group' ? GROUP_SHEET : PERSONAL_SHEET;
-  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: sheetName + '!A:K' });
-  const rows = result.data.values || [];
+  const result = await sheetsGet(sheetName + '!A:K');
+  const rows = result.values || [];
 
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === taskId) {
       if (taskType === 'group') {
-        await sheets.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: sheetName + '!H' + (i+1) + ':K' + (i+1), valueInputOption: 'USER_ENTERED', requestBody: { values: [['完了', '', now, userName]] } });
+        await sheetsUpdate(sheetName + '!H' + (i+1) + ':K' + (i+1), [['完了', '', now, userName]]);
       } else {
-        await sheets.spreadsheets.values.update({ spreadsheetId: SPREADSHEET_ID, range: sheetName + '!G' + (i+1) + ':I' + (i+1), valueInputOption: 'USER_ENTERED', requestBody: { values: [['完了', now, '']] } });
+        await sheetsUpdate(sheetName + '!G' + (i+1) + ':I' + (i+1), [['完了', now, '']]);
       }
       break;
     }
@@ -125,38 +158,53 @@ async function completeTaskAction(event, taskId, taskType) {
 
 async function buildGroupTaskListResponse(event) {
   const spaceId = event.space.name;
-  const sheets = await getSheets();
-  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: GROUP_SHEET + '!A:K' });
-  const rows = result.data.values || [];
-  const tasks = rows.slice(1).filter(r => r[1] === spaceId && r[7] === '未完了').map(r => ({ taskId: r[0], text: r[4], byName: r[6], createdAt: r[8] }));
+  const result = await sheetsGet(GROUP_SHEET + '!A:K');
+  const rows = result.values || [];
+  const tasks = rows.slice(1)
+    .filter(r => r[1] === spaceId && r[7] === '未完了')
+    .map(r => ({ taskId: r[0], text: r[4], byName: r[6], createdAt: r[8] }));
 
   const widgets = tasks.length === 0
     ? [{ textParagraph: { text: '🎉 未完了の全体タスクはありません！' } }]
-    : tasks.map(t => ({ decoratedText: { topLabel: t.byName + '（' + fmtDate(t.createdAt) + '）', text: t.text, button: { text: '✅ 完了', onClick: { action: { function: 'completeTask', parameters: [{ key: 'taskId', value: t.taskId }, { key: 'taskType', value: 'group' }] } } } } }));
+    : tasks.map(t => ({
+        decoratedText: {
+          topLabel: t.byName + '（' + fmtDate(t.createdAt) + '）',
+          text: t.text,
+          button: { text: '✅ 完了', onClick: { action: { function: 'completeTask', parameters: [{ key: 'taskId', value: t.taskId }, { key: 'taskType', value: 'group' }] } } }
+        }
+      }));
 
   widgets.push({ buttonList: { buttons: [{ text: '🔄 更新', onClick: { action: { function: 'refreshGroupTasks' } } }] } });
-
   return { cardsV2: [{ cardId: 'groupTaskList', card: { header: { title: '👥 全体タスク一覧', subtitle: '未完了：' + tasks.length + '件' }, sections: [{ widgets }] } }] };
 }
 
 async function buildPersonalTaskListResponse(event) {
   const userId = event.user.name;
   const spaceId = event.space.name;
-  const sheets = await getSheets();
-  const result = await sheets.spreadsheets.values.get({ spreadsheetId: SPREADSHEET_ID, range: PERSONAL_SHEET + '!A:I' });
-  const rows = result.data.values || [];
-  const tasks = rows.slice(1).filter(r => r[1] === userId && r[3] === spaceId && r[6] === '未完了').map(r => ({ taskId: r[0], text: r[5], createdAt: r[7] }));
+  const result = await sheetsGet(PERSONAL_SHEET + '!A:I');
+  const rows = result.values || [];
+  const tasks = rows.slice(1)
+    .filter(r => r[1] === userId && r[3] === spaceId && r[6] === '未完了')
+    .map(r => ({ taskId: r[0], text: r[5], createdAt: r[7] }));
 
   const widgets = tasks.length === 0
     ? [{ textParagraph: { text: '🎉 未完了の個人タスクはありません！' } }]
-    : tasks.map(t => ({ decoratedText: { topLabel: fmtDate(t.createdAt), text: t.text, button: { text: '✅ 完了', onClick: { action: { function: 'completeTask', parameters: [{ key: 'taskId', value: t.taskId }, { key: 'taskType', value: 'personal' }] } } } } }));
+    : tasks.map(t => ({
+        decoratedText: {
+          topLabel: fmtDate(t.createdAt),
+          text: t.text,
+          button: { text: '✅ 完了', onClick: { action: { function: 'completeTask', parameters: [{ key: 'taskId', value: t.taskId }, { key: 'taskType', value: 'personal' }] } } }
+        }
+      }));
 
   widgets.push({ buttonList: { buttons: [{ text: '🔄 更新', onClick: { action: { function: 'refreshPersonalTasks' } } }] } });
-
   return { cardsV2: [{ cardId: 'personalTaskList', card: { header: { title: '👤 あなたの個人タスク', subtitle: '未完了：' + tasks.length + '件' }, sections: [{ widgets }] } }] };
 }
 
 function fmtDate(d) {
   if (!d) return '';
-  try { const dt = new Date(d); return (dt.getMonth()+1) + '/' + dt.getDate() + ' ' + String(dt.getHours()).padStart(2,'0') + ':' + String(dt.getMinutes()).padStart(2,'0'); } catch(e) { return ''; }
+  try {
+    const dt = new Date(d);
+    return (dt.getMonth()+1) + '/' + dt.getDate() + ' ' + String(dt.getHours()).padStart(2,'0') + ':' + String(dt.getMinutes()).padStart(2,'0');
+  } catch(e) { return ''; }
 }
