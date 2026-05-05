@@ -13,11 +13,11 @@ function addTaskFromAction(event, taskType) {
   var user = event.user;
   var space = event.space;
 
-  var messageText = message.text || '(テキストなし)';
+  var messageText = (message && message.text) ? message.text : '(テキストなし)';
   var truncatedText = messageText.length > 50
     ? messageText.substring(0, 50) + '...'
     : messageText;
-  var messageId = message.name;
+  var messageId = (message && message.name) ? message.name : '';
   var spaceId = space.name;
   var spaceName = space.displayName || spaceId;
   var userId = user.name;
@@ -41,7 +41,7 @@ function addTaskFromAction(event, taskType) {
     ]);
   }
 
-  var threadName = message.thread ? message.thread.name : null;
+  var threadName = (message && message.thread) ? message.thread.name : null;
   var registeredCard = buildTaskRegisteredCard(truncatedText, taskId, taskType, userName);
 
   return {

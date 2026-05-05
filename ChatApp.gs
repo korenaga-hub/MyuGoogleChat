@@ -1,5 +1,25 @@
 // Google Chat タスク管理Bot - 接続テスト用（最小構成）
 
+function normalizeEvent(event) {
+  var user, space, message;
+  if (event.chat && event.chat.appCommandPayload) {
+    var p = event.chat.appCommandPayload;
+    user = p.sender;
+    space = p.space;
+    message = (p.messagePayload && p.messagePayload.message) ? p.messagePayload.message : null;
+  } else if (event.chat && event.chat.buttonClickedPayload) {
+    var p = event.chat.buttonClickedPayload;
+    user = p.sender;
+    space = p.space;
+    message = p.message || null;
+  } else {
+    user = event.user;
+    space = event.space;
+    message = event.message || null;
+  }
+  return { user: user, space: space, message: message };
+}
+
 function onAppCommand(event) {
   try {
     Logger.log('onAppCommand: ' + JSON.stringify(event).substring(0, 800));
@@ -10,10 +30,11 @@ function onAppCommand(event) {
       commandId = event.message.slashCommand.commandId;
     }
     Logger.log('commandId: ' + commandId);
-    if (commandId == 1 || commandId == '1') return buildGroupTaskListResponse(event);
-    if (commandId == 2 || commandId == '2') return buildPersonalTaskListResponse(event);
-    if (commandId == 3 || commandId == '3') return addTaskFromAction(event, 'group');
-    if (commandId == 4 || commandId == '4') return addTaskFromAction(event, 'personal');
+    var nEvent = normalizeEvent(event);
+    if (commandId == 1 || commandId == '1') return buildGroupTaskListResponse(nEvent);
+    if (commandId == 2 || commandId == '2') return buildPersonalTaskListResponse(nEvent);
+    if (commandId == 3 || commandId == '3') return addTaskFromAction(nEvent, 'group');
+    if (commandId == 4 || commandId == '4') return addTaskFromAction(nEvent, 'personal');
     return { text: 'コマンドを受け取りました（ID: ' + commandId + '）' };
   } catch(err) {
     Logger.log('ERROR in onAppCommand: ' + err.toString());
