@@ -46,25 +46,70 @@ async function sheetsUpdate(range, values) {
   return await res.json();
 }
 
+function wrapMsg(msg) {
+  if (!msg || Object.keys(msg).length === 0) return {};
+  return { hostAppDataAction: { chatDataAction: { createMessageAction: { message: msg } } } };
+}
+
 exports.chatApp = async (req, res) => {
   try {
     const event = req.body;
-    console.log('Event:', JSON.stringify(event).substring(0, 300));
+    const chatForLog = event.chat ? JSON.parse(JSON.stringify(event.chat)) : {};
+    if (chatForLog.user) delete chatForLog.user.avatarUrl;
+    console.log('ChatFull:', JSON.stringify(chatForLog));
     const response = await processEvent(event);
     res.status(200).json(response);
   } catch (err) {
     console.error('Error:', err);
-    res.status(200).json({ text: 'エラー: ' + err.message });
+    res.status(200).json(wrapMsg({ text: 'エラー: ' + err.message }));
   }
 };
 
 async function processEvent(event) {
-  switch (event.type) {
-    case 'MESSAGE': return await handleMessage(event);
-    case 'CARD_CLICKED': return await handleCardClick(event);
+  const chatData = event.chat || {};
+  const user = event.user || chatData.user;
+
+  let eventType, message, space, action;
+
+  if (chatData.appCommandPayload) {
+    eventType = 'MESSAGE';
+    const payload = chatData.appCommandPayload;
+    const cmdId = payload.appCommandMetadata && payload.appCommandMetadata.appCommandId;
+    message = Object.assign({}, payload.message, { slashCommand: { commandId: cmdId } });
+    space = payload.space;
+  } else if (chatData.messagePayload) {
+    eventType = 'MESSAGE';
+    message = chatData.messagePayload.message;
+    space   = chatData.messagePayload.space;
+  } else if (chatData.buttonClickedPayload) {
+    eventType = 'CARD_CLICKED';
+    space  = chatData.buttonClickedPayload.space;
+    action = chatData.buttonClickedPayload.action;
+  } else if (chatData.addedToSpacePayload) {
+    eventType = 'ADDED_TO_SPACE';
+    space = chatData.addedToSpacePayload.space;
+  } else if (chatData.removedFromSpacePayload) {
+    eventType = 'REMOVED_FROM_SPACE';
+    space = chatData.removedFromSpacePayload.space;
+  } else {
+    eventType = event.type || 'UNKNOWN';
+    message = event.message;
+    space   = event.space;
+    action  = event.action;
+  }
+
+  console.log('EventType:', eventType, 'HasMsg:', !!message, 'HasAction:', !!action);
+  const e = { type: eventType, user, space, message, action };
+
+  switch (eventType) {
+    case 'MESSAGE':           return await handleMessage(e);
+    case 'CARD_CLICKED':      return await handleCardClick(e);
     case 'ADDED_TO_SPACE':
-      return { text: 'MyuTask Botが追加されました！\n`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。' };
-    default: return { text: '' };
+      return wrapMsg({ text: 'MyuTask Botが追加されました！\n`/tasks`で全体タスク一覧、`/mytasks`で個人タスク一覧を表示できます。' });
+    case 'REMOVED_FROM_SPACE':
+      return {};
+    default:
+      return wrapMsg({ text: 'MyuTask Bot起動中です。`/tasks` または `/mytasks` をお試しください。' });
   }
 }
 
@@ -77,7 +122,7 @@ async function handleMessage(event) {
     if (id == 3) return await addTaskFromAction(event, 'group');
     if (id == 4) return await addTaskFromAction(event, 'personal');
   }
-  return { text: '`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。' };
+  return wrapMsg({ text: '`/tasks` で全体タスク一覧、`/mytasks` で個人タスク一覧を表示できます。' });
 }
 
 async function handleCardClick(event) {
@@ -87,7 +132,7 @@ async function handleCardClick(event) {
   if (actionName === 'completeTask') return await completeTaskAction(event, getParam('taskId'), getParam('taskType'));
   if (actionName === 'refreshGroupTasks') return await buildGroupTaskListResponse(event);
   if (actionName === 'refreshPersonalTasks') return await buildPersonalTaskListResponse(event);
-  return { text: '不明なアクションです。' };
+  return wrapMsg({ text: '不明なアクションです。' });
 }
 
 async function addTaskFromAction(event, taskType) {
@@ -115,7 +160,7 @@ async function addTaskFromAction(event, taskType) {
 
   const icon = taskType === 'group' ? '👥' : '👤';
   const label = taskType === 'group' ? '全体タスク' : '個人タスク';
-  return {
+  return wrapMsg({
     cardsV2: [{ cardId: 'registered_' + taskId, card: {
       header: { title: icon + ' ' + label + 'に登録しました', subtitle: '登録者：' + (user.displayName || user.name) },
       sections: [{ widgets: [
@@ -123,7 +168,7 @@ async function addTaskFromAction(event, taskType) {
         { buttonList: { buttons: [{ text: '✅ 完了にする', onClick: { action: { function: 'completeTask', parameters: [{ key: 'taskId', value: taskId }, { key: 'taskType', value: taskType }] } } }] } }
       ]}]
     }}]
-  };
+  });
 }
 
 async function completeTaskAction(event, taskId, taskType) {
@@ -147,13 +192,13 @@ async function completeTaskAction(event, taskId, taskType) {
 
   const icon = taskType === 'group' ? '👥' : '👤';
   const label = taskType === 'group' ? '全体タスク' : '個人タスク';
-  return {
+  return wrapMsg({
     actionResponse: { type: 'UPDATE_CARD' },
     cardsV2: [{ cardId: 'completed', card: {
       header: { title: '✅ ' + icon + label + '完了', subtitle: '完了者：' + userName },
       sections: [{ widgets: [{ textParagraph: { text: 'このタスクは完了済みです。お疲れさまでした！' } }] }]
     }}]
-  };
+  });
 }
 
 async function buildGroupTaskListResponse(event) {
@@ -175,7 +220,7 @@ async function buildGroupTaskListResponse(event) {
       }));
 
   widgets.push({ buttonList: { buttons: [{ text: '🔄 更新', onClick: { action: { function: 'refreshGroupTasks' } } }] } });
-  return { cardsV2: [{ cardId: 'groupTaskList', card: { header: { title: '👥 全体タスク一覧', subtitle: '未完了：' + tasks.length + '件' }, sections: [{ widgets }] } }] };
+  return wrapMsg({ cardsV2: [{ cardId: 'groupTaskList', card: { header: { title: '👥 全体タスク一覧', subtitle: '未完了：' + tasks.length + '件' }, sections: [{ widgets }] } }] });
 }
 
 async function buildPersonalTaskListResponse(event) {
@@ -198,7 +243,7 @@ async function buildPersonalTaskListResponse(event) {
       }));
 
   widgets.push({ buttonList: { buttons: [{ text: '🔄 更新', onClick: { action: { function: 'refreshPersonalTasks' } } }] } });
-  return { cardsV2: [{ cardId: 'personalTaskList', card: { header: { title: '👤 あなたの個人タスク', subtitle: '未完了：' + tasks.length + '件' }, sections: [{ widgets }] } }] };
+  return wrapMsg({ cardsV2: [{ cardId: 'personalTaskList', card: { header: { title: '👤 あなたの個人タスク', subtitle: '未完了：' + tasks.length + '件' }, sections: [{ widgets }] } }] });
 }
 
 function fmtDate(d) {
